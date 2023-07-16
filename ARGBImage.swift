@@ -30,8 +30,52 @@ import Cocoa
 /// }
 /// ```
 struct ARGBImage: CustomStringConvertible {
+  /// Either the NSImage used to create the struct or one constructed by other initializers
   public let image: NSImage
+  
+  /// The NSSize/CGSize representing the size of the image data
+  public let imageSize: NSSize
+  
+  /// The image data in AlphaRedGreenBlue order
   public let argbPixels: [UInt8]
+  
+  /// The RGBA representation of the pixel data in the image.
+  public var rgbaPixels: [UInt8] {
+    guard argbPixels.count % 4 == 0 else {
+      assertionFailure("Pixel data is corrupted, pixel count is not a multiple of 4.")
+      return []
+    }
+
+    var rgbaPixels = [UInt8](repeating: 0, count: argbPixels.count)
+
+    for i in stride(from: 0, to: argbPixels.count, by: 4) {
+      rgbaPixels[i]     = argbPixels[i + 1] // R
+      rgbaPixels[i + 1] = argbPixels[i + 2] // G
+      rgbaPixels[i + 2] = argbPixels[i + 3] // B
+      rgbaPixels[i + 3] = argbPixels[i]     // A
+    }
+
+    return rgbaPixels
+  }
+  
+  /// The RGB representation of the pixel data in the image.
+  public var rgbPixels: [UInt8] {
+    guard argbPixels.count % 4 == 0 else {
+      assertionFailure("Pixel data is corrupted, pixel count is not a multiple of 4.")
+      return []
+    }
+
+    var rgbPixels = [UInt8]()
+    rgbPixels.reserveCapacity((argbPixels.count / 4) * 3)
+
+    for i in stride(from: 0, to: argbPixels.count, by: 4) {
+      rgbPixels.append(argbPixels[i + 1]) // R
+      rgbPixels.append(argbPixels[i + 2]) // G
+      rgbPixels.append(argbPixels[i + 3]) // B
+    }
+
+    return rgbPixels
+  }
   
   /// Initializes an `ARGBImage` from a given `NSImage`.
   ///
@@ -84,7 +128,8 @@ struct ARGBImage: CustomStringConvertible {
       return nil
     }
     
-    self.image = NSImage(size: NSSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh))
+    self.imageSize = NSSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
+    self.image = NSImage(size: self.imageSize)
     self.image.addRepresentation(bitmap)
     
     // Prepare ARGB pixel data
@@ -123,6 +168,7 @@ struct ARGBImage: CustomStringConvertible {
   ///     Defaults to `false`.
   public init?(cgImage: CGImage, includeHeader: Bool = false) {
     self.image = NSImage(cgImage: cgImage, size: NSZeroSize)
+    self.imageSize = NSSize(width: cgImage.width, height: cgImage.height)
     
     let width = cgImage.width
     let height = cgImage.height
@@ -162,7 +208,6 @@ struct ARGBImage: CustomStringConvertible {
       self.argbPixels = pixelData
     }
   }
-  
   
   /// Converts an array of `UInt8` elements to a formatted string of hexadecimal literals.
   ///
@@ -214,6 +259,95 @@ struct ARGBImage: CustomStringConvertible {
     return output
   }
   
+  /// Creates a CGImage from the ARGB pixel data.
+  ///
+  /// This function generates a CGImage from the ARGB pixel data in the ARGBImage struct.
+  ///
+  /// - Returns: A CGImage instance. Nil if the image could not be created.
+  public func toCGImage() -> CGImage? {
+    let width = imageSize.width
+    let height = imageSize.height
+    
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let bitmapInfo: CGBitmapInfo = CGBitmapInfo.byteOrder32Big.union(
+      CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+    )
+    
+    var pixelData = argbPixels // We need a mutable copy to pass to CGDataProvider
+    
+    guard let providerRef = CGDataProvider(
+      data: NSData(bytes: &pixelData, length: pixelData.count)
+    ) else { return nil }
+    
+    let cgImage = CGImage(
+      width: Int(width),
+      height: Int(height),
+      bitsPerComponent: 8,
+      bitsPerPixel: 32,
+      bytesPerRow: Int(width) * 4,
+      space: colorSpace,
+      bitmapInfo: bitmapInfo,
+      provider: providerRef,
+      decode: nil,
+      shouldInterpolate: true,
+      intent: .defaultIntent
+    )
+    
+    return cgImage
+  }
+  
+  /// This function creates an NSBitmapImageRep from the argbPixels property.
+  ///
+  /// - Returns: An NSBitmapImageRep initialized with the ARGB pixel data, or nil if the bitmap
+  ///   image representation could not be initialized. The created NSBitmapImageRep will have a
+  ///   bitsPerComponent of 8, will have an alpha component (as the first component), will not
+  ///   be planar, and will have a colorSpaceName of deviceRGB.
+  ///
+  /// This method is useful when you need to convert the ARGB pixel data back to an image format
+  /// that can be displayed or manipulated with AppKit APIs.
+  public func toNSBitmapImageRep() -> NSBitmapImageRep? {
+    let width = Int(imageSize.width)
+    let height = Int(imageSize.height)
+
+    let bitmap = NSBitmapImageRep(
+      bitmapDataPlanes: nil,
+      pixelsWide: width,
+      pixelsHigh: height,
+      bitsPerSample: 8,
+      samplesPerPixel: 4,
+      hasAlpha: true,
+      isPlanar: false,
+      colorSpaceName: .deviceRGB,
+      bytesPerRow: width * 4,
+      bitsPerPixel: 32
+    )
+
+    guard let bitmapImage = bitmap else {
+      return nil
+    }
+
+    var pixelDataIndex = 0
+    for y in 0..<height {
+      for x in 0..<width {
+        let pixelIndex = (y * width + x) * 4
+        let alpha = CGFloat(argbPixels[pixelIndex]) / 255.0
+        let red = CGFloat(argbPixels[pixelIndex + 1]) / 255.0
+        let green = CGFloat(argbPixels[pixelIndex + 2]) / 255.0
+        let blue = CGFloat(argbPixels[pixelIndex + 3]) / 255.0
+
+        bitmapImage.setColor(
+          NSColor(red: red, green: green, blue: blue, alpha: alpha),
+          atX: x,
+          y: y
+        )
+        
+        pixelDataIndex += 4
+      }
+    }
+
+    return bitmapImage
+  }
+
   /// CustomStringConvertible conformance
   ///
   /// Uses the function hexLiterals to output an unnamed variable definition of [UInt8]
