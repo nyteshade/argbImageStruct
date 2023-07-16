@@ -209,6 +209,7 @@ struct ARGBImage: CustomStringConvertible {
     }
   }
   
+  
   /// Converts an array of `UInt8` elements to a formatted string of hexadecimal literals.
   ///
   /// This function transforms an array of bytes into a formatted string representation where
@@ -309,7 +310,15 @@ struct ARGBImage: CustomStringConvertible {
     let width = Int(imageSize.width)
     let height = Int(imageSize.height)
 
-    let bitmap = NSBitmapImageRep(
+    // Ensure the pixels array has exactly width*height*4 values
+    guard argbPixels.count == width * height * 4 else {
+      print("Invalid pixel count for the specified width and height")
+      return nil
+    }
+    
+    var rgbaPixels = self.rgbaPixels
+    
+    let bitmapRep = NSBitmapImageRep(
       bitmapDataPlanes: nil,
       pixelsWide: width,
       pixelsHigh: height,
@@ -317,35 +326,68 @@ struct ARGBImage: CustomStringConvertible {
       samplesPerPixel: 4,
       hasAlpha: true,
       isPlanar: false,
-      colorSpaceName: .deviceRGB,
+      colorSpaceName: NSColorSpaceName.deviceRGB,
       bytesPerRow: width * 4,
       bitsPerPixel: 32
     )
+    
+    // Copy pixel data into the bitmap representation
+    memcpy(bitmapRep!.bitmapData, rgbaPixels, rgbaPixels.count)
 
-    guard let bitmapImage = bitmap else {
-      return nil
-    }
-
-    var pixelDataIndex = 0
-    for y in 0..<height {
-      for x in 0..<width {
-        let pixelIndex = (y * width + x) * 4
-        let alpha = CGFloat(argbPixels[pixelIndex]) / 255.0
-        let red = CGFloat(argbPixels[pixelIndex + 1]) / 255.0
-        let green = CGFloat(argbPixels[pixelIndex + 2]) / 255.0
-        let blue = CGFloat(argbPixels[pixelIndex + 3]) / 255.0
-
-        bitmapImage.setColor(
-          NSColor(red: red, green: green, blue: blue, alpha: alpha),
-          atX: x,
-          y: y
-        )
-        
-        pixelDataIndex += 4
-      }
-    }
-
-    return bitmapImage
+    return bitmapRep
+  }
+  
+  /// Saves the image as a file at the specified file path.
+  ///
+  /// This method creates an `NSBitmapImageRep` from the ARGB pixel data and then uses it to write
+  /// the image to disk at the specified path. The image file type and properties are defined by
+  /// the parameters.
+  ///
+  /// - Parameters:
+  ///   - filePath: The path of the file to save the image to.
+  ///   - storageType: The file type to use when saving the image. This determines the image file's
+  ///     format.
+  ///   - properties: A dictionary that contains key-value pairs specifying the image properties.
+  ///     The keys in the dictionary are constants declared by `NSBitmapImageRep.PropertyKey`.
+  ///   - options: Options for writing the image data to disk. Default value is an empty option
+  ///     set.
+  ///
+  /// - Throws: An error in the Cocoa domain, if there is an error writing to the `URL`.
+  public func saveAs(
+    filePath: String,
+    using storageType: NSBitmapImageRep.FileType = .png,
+    properties: [NSBitmapImageRep.PropertyKey : Any] = [:],
+    options: Data.WritingOptions = []
+  ) throws {
+    try saveAs(url: URL(filePath: filePath), using: storageType, properties: properties)
+  }
+  
+  /// Saves the image as a file at the specified URL.
+  ///
+  /// This method creates an `NSBitmapImageRep` from the ARGB pixel data and then uses it to write
+  /// the image to disk at the specified URL. The image file type and properties are defined by
+  /// the parameters.
+  ///
+  /// - Parameters:
+  ///   - url: The URL to save the image to.
+  ///   - storageType: The file type to use when saving the image. This determines the image file's
+  ///     format.
+  ///   - properties: A dictionary that contains key-value pairs specifying the image properties.
+  ///     The keys in the dictionary are constants declared by `NSBitmapImageRep.PropertyKey`.
+  ///   - options: Options for writing the image data to disk. Default value is an empty option
+  ///     set.
+  ///
+  /// - Throws: An error in the Cocoa domain, if there is an error writing to the `URL`.
+  public func saveAs(
+    url: URL,
+    using storageType: NSBitmapImageRep.FileType = .png,
+    properties: [NSBitmapImageRep.PropertyKey : Any] = [:],
+    options: Data.WritingOptions = []
+  ) throws {
+    let bitmapRep = toNSBitmapImageRep()
+    let data = bitmapRep?.representation(using: storageType, properties: properties)
+    
+    try data?.write(to: url, options: options)
   }
 
   /// CustomStringConvertible conformance
